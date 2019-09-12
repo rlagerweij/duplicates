@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // WalkedFile a type of struct
@@ -23,7 +25,6 @@ var (
 	singleThread  = false
 	delete        = false
 	visitCount    int64
-	previous      = ""
 	fileCount     int64
 	dupCount      int64
 	minSize       int64
@@ -46,10 +47,15 @@ func scanAndHashFile(path string, f os.FileInfo, progress *Progress) {
 			fmt.Fprintf(os.Stderr, "%s\n", err.Error())
 		} else {
 			md5 := md5.New()
-			io.Copy(md5, file)
+			_, err := io.Copy(md5, file)
+			if err != nil {
+				log.Errorln(err)
+			}
 			var hash = fmt.Sprintf("%x", md5.Sum(nil))
-			//fmt.Printf("%s\t%s\t%d bytes\n", path, hash, f.Size())
-			file.Close()
+			err = file.Close()
+			if err != nil {
+				log.Errorln(err)
+			}
 			duplicates.Lock()
 			duplicates.m[hash] = append(duplicates.m[hash], path)
 			duplicates.Unlock()
@@ -82,7 +88,7 @@ func computeHashes() {
 		jobs <- file
 	}
 	close(jobs)
-	for _ = range walkFiles {
+	for range walkFiles {
 		<-results
 	}
 	walkProgress.delete()
@@ -130,7 +136,10 @@ func main() {
 	}
 	r, _ := regexp.Compile(filenameMatch)
 	filenameRegex = r
-	filepath.Walk(root, visitFile)
+	err := filepath.Walk(root, visitFile)
+	if err != nil {
+		log.Errorln(err)
+	}
 	walkProgress.delete()
 	computeHashes()
 	for _, v := range duplicates.m {
