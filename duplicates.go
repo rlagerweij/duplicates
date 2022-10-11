@@ -66,7 +66,7 @@ func scanAndHashFile(path string, f os.FileInfo, progress *Progress) {
 
 func worker(workerID int, jobs <-chan *WalkedFile, results chan<- int, progress *Progress) {
 	for file := range jobs {
-		//fmt.Println("hashing ", file.path, " on worker ", workerId)
+		fmt.Println("hashing ", file.path, " on worker ", workerID)
 		scanAndHashFile(file.path, file.file, progress)
 		results <- 0
 	}
@@ -76,6 +76,7 @@ func computeHashes() {
 	walkProgress := creatProgress("Scanning %d files ...", &noStats)
 	jobs := make(chan *WalkedFile, visitCount)
 	results := make(chan int, visitCount)
+
 	if singleThread {
 		fmt.Println("Single Thread Mode")
 		go worker(1, jobs, results, walkProgress)
@@ -84,10 +85,13 @@ func computeHashes() {
 			go worker(w, jobs, results, walkProgress)
 		}
 	}
+
 	for _, file := range walkFiles {
 		jobs <- file
 	}
+
 	close(jobs)
+
 	for range walkFiles {
 		<-results
 	}
@@ -163,6 +167,7 @@ func main() {
 			fmt.Println("---------")
 		}
 	}
+
 	if !noStats {
 		fmt.Printf("\nFound %d duplicates from %d files in %s with options { size: '%d', name: '%s' }\n", dupCount, fileCount, root, minSize, filenameMatch)
 	}
