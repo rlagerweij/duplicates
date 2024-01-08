@@ -28,19 +28,21 @@ type PotentialDupe struct {
 }
 
 var (
-	singleThread   bool = false
-	delete         bool = false
-	linkFiles      bool = false
-	hashEntireFile bool = false
-	visitCount     int64
-	fileCount      int64
-	dupCount       int64
-	dupSize        int64
-	minSize        int64
-	hashNumBytes   int64 = 4096
-	filenameMatch        = "*"
-	filenameRegex  *regexp.Regexp
-	duplicates     = struct {
+	singleThread      bool = false
+	delete            bool = false
+	linkFiles         bool = false
+	hashEntireFile    bool = false
+	visitCount        int64
+	fileCount         int64
+	dupCount          int64
+	dupSize           int64
+	potentialDupCount int64
+	potentialDupSize  int64
+	minSize           int64
+	hashNumBytes      int64 = 4096
+	filenameMatch           = "*"
+	filenameRegex     *regexp.Regexp
+	duplicates        = struct {
 		sync.RWMutex
 		m map[int64][]*PotentialDupe
 	}{m: make(map[int64][]*PotentialDupe)}
@@ -49,7 +51,10 @@ var (
 	walkFiles    map[int64][]*WalkedFile
 )
 
+var wg sync.WaitGroup
+
 func scanAndHashFile(path string, f os.FileInfo, progress *Progress) {
+	defer wg.Done()
 	if !f.IsDir() && f.Size() > minSize && (filenameMatch == "*" || filenameRegex.MatchString(f.Name())) {
 		atomic.AddInt64(&fileCount, 1)
 		file, err := os.Open(path)
@@ -90,31 +95,30 @@ func scanAndHashFile(path string, f os.FileInfo, progress *Progress) {
 	}
 }
 
-func hash_worker(workerID int, jobs <-chan *WalkedFile, results chan<- int, progress *Progress) {
+func hash_worker(workerID int, jobs <-chan *WalkedFile, progress *Progress) {
 	for file := range jobs {
 		fmt.Println("hashing ", file.path, " on worker ", workerID)
 		scanAndHashFile(file.path, file.file, progress)
-		results <- 0
 	}
 }
 
 func computeHashes() {
 	walkProgress := creatProgress("Scanning %d files ...", &printStats)
 	jobs := make(chan *WalkedFile, visitCount)
-	results := make(chan int, visitCount)
 
 	if singleThread {
 		fmt.Println("Single Thread Mode")
-		go hash_worker(1, jobs, results, walkProgress)
+		go hash_worker(1, jobs, walkProgress)
 	} else {
 		for w := 1; w <= runtime.NumCPU(); w++ {
-			go hash_worker(w, jobs, results, walkProgress)
+			go hash_worker(w, jobs, walkProgress)
 		}
 	}
 
 	for _, files := range walkFiles {
 		if len(files) > 1 {
 			for _, f := range files {
+				wg.Add(1)
 				jobs <- f
 			}
 		}
@@ -122,12 +126,7 @@ func computeHashes() {
 
 	close(jobs)
 
-	//wait for the coroutines to finish by waiting for the expected number of messages to be received through the results channel
-	for _, f := range walkFiles {
-		for range f {
-			<-results
-		}
-	}
+	wg.Wait()
 
 	walkProgress.delete()
 }
@@ -196,8 +195,10 @@ func parseFlags() string {
 	if len(flag.Args()) < 1 {
 		fmt.Fprintf(os.Stderr, "You have to specify at least a directory to explore ...\n")
 		fmt.Fprintf(os.Stdout, "Run 'duplicates -h' for help\n")
-		os.Exit(-1)
+		//	os.Exit(-1)
+		return "./test/"
 	}
+
 	return flag.Arg(0)
 }
 
@@ -236,23 +237,39 @@ func main() {
 	location := parseFlags()
 
 	generateFileList(location)
-	computeHashes()
 
-	for _, v := range duplicates.m {
+	for k, v := range walkFiles {
 		if len(v) > 1 {
-			dupCount++
+			potentialDupCount += int64(len(v) - 1)
+			potentialDupSize += k * int64(len(v)-1)
 		}
 	}
 
-	if printStats {
-		fmt.Printf("\nFound %d duplicates from %d files in %s with options { size: '%d', name: '%s' }\n", dupCount, fileCount, location, minSize, filenameMatch)
-		fmt.Printf("\n---------\n")
+	fmt.Printf("\nInvestigating %d potential duplicates from %d files found in: %s\n\n", potentialDupCount, fileCount, location)
+
+	computeHashes()
+
+	for k, v := range duplicates.m {
+		if len(v) > 1 {
+			dupCount += int64(len(v) - 1)
+			dupSize += k * int64(len(v)-1)
+		}
 	}
 
-	for s, v := range duplicates.m {
-		if len(v) > 1 {
-			dupSize += s * int64(len(v)-1)
+	fmt.Printf("\n%d duplicates with a total size of %s from %d files found in %s\n", dupCount, ByteCountSI(dupSize), fileCount, location)
 
+	if dupCount == 0 {
+		os.Exit(0)
+	}
+
+	fmt.Println("Processing results")
+
+	for s, v := range duplicates.m {
+		if printStats {
+			fmt.Println("---------")
+		}
+
+		if len(v) > 1 {
 			for i, file := range v {
 				sameHash := file.quickHash == v[0].quickHash
 
@@ -271,13 +288,15 @@ func main() {
 					fmt.Printf("[%d] [%s] %s\n", s, file.quickHash, file.path)
 				}
 			}
-			if printStats {
-				fmt.Println("---------")
-			}
 		}
 	}
 
 	fmt.Printf("\n%d duplicates with a total size of %s from %d files found in %s\n", dupCount, ByteCountSI(dupSize), fileCount, location)
 
+	if printStats {
+		fmt.Println("---------")
+	}
+
 	os.Exit(0)
+
 }
