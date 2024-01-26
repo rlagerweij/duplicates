@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -37,7 +38,6 @@ var (
 	dupCount          int64
 	dupSize           int64
 	potentialDupCount int64
-	potentialDupSize  int64
 	minSize           int64
 	hashNumBytes      int64 = 4096
 	filenameMatch           = "*"
@@ -48,7 +48,7 @@ var (
 	}{m: make(map[int64][]*PotentialDupe)}
 	printStats   bool
 	walkProgress *Progress
-	walkFiles    map[int64][]*WalkedFile
+	walkFiles    = make(map[int64][]*WalkedFile)
 )
 
 var wg sync.WaitGroup
@@ -195,8 +195,7 @@ func parseFlags() string {
 	if len(flag.Args()) < 1 {
 		fmt.Fprintf(os.Stderr, "You have to specify at least a directory to explore ...\n")
 		fmt.Fprintf(os.Stdout, "Run 'duplicates -h' for help\n")
-		//	os.Exit(-1)
-		return "./test/"
+		os.Exit(0)
 	}
 
 	return flag.Arg(0)
@@ -231,17 +230,19 @@ func ByteCountSI(b int64) string {
 }
 
 func main() {
-	walkFiles = make(map[int64][]*WalkedFile)
+	//	walkFiles = make(map[int64][]*WalkedFile)
 	//TODO: add time run time measurement
+
+	startTime := time.Now()
 
 	location := parseFlags()
 
 	generateFileList(location)
 
-	for k, v := range walkFiles {
+	for _, v := range walkFiles {
 		if len(v) > 1 {
 			potentialDupCount += int64(len(v) - 1)
-			potentialDupSize += k * int64(len(v)-1)
+			// potentialDupSize += k * int64(len(v)-1)
 		}
 	}
 
@@ -256,9 +257,8 @@ func main() {
 		}
 	}
 
-	fmt.Printf("\n%d duplicates with a total size of %s from %d files found in %s\n", dupCount, ByteCountSI(dupSize), fileCount, location)
-
 	if dupCount == 0 {
+		fmt.Println("No duplicates found")
 		os.Exit(0)
 	}
 
@@ -271,27 +271,40 @@ func main() {
 
 		if len(v) > 1 {
 			for i, file := range v {
-				sameHash := file.quickHash == v[0].quickHash
+				if printStats {
+					fmt.Printf("[%d] [%s] %s", s, file.quickHash, file.path)
+				}
 
-				if i > 0 && sameHash && delete {
+				if i == 0 {
+					fmt.Println()
+					continue
+				}
+
+				sameHash := (file.quickHash == v[0].quickHash) && (i > 0)
+
+				if sameHash && printStats {
+					fmt.Println(" [DUP]")
+				} else {
+					fmt.Println(" [NO-DUP]")
+				}
+
+				if sameHash && delete {
 
 					deleteFile(file.path)
 					continue
 				}
 
-				if i > 0 && sameHash && linkFiles {
+				if sameHash && linkFiles {
 					linkFile(v[0].path, file.path)
 					continue
-				}
-
-				if printStats {
-					fmt.Printf("[%d] [%s] %s\n", s, file.quickHash, file.path)
 				}
 			}
 		}
 	}
 
-	fmt.Printf("\n%d duplicates with a total size of %s from %d files found in %s\n", dupCount, ByteCountSI(dupSize), fileCount, location)
+	duration := time.Since(startTime)
+
+	fmt.Printf("\n%d duplicates with a total size of %s from %d files found in %s in %s\n", dupCount, ByteCountSI(dupSize), fileCount, location, duration.String())
 
 	if printStats {
 		fmt.Println("---------")
