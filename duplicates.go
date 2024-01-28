@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -21,25 +22,39 @@ type WalkedFile struct {
 	file os.FileInfo
 }
 
+type PotentialDupe struct {
+	WalkedFile
+	quickHash string
+	fullHash  string
+}
+
 var (
-	singleThread  = false
-	delete        = false
-	visitCount    int64
-	fileCount     int64
-	dupCount      int64
-	minSize       int64
-	filenameMatch = "*"
-	filenameRegex *regexp.Regexp
-	duplicates    = struct {
+	singleThread      bool = false
+	delete            bool = false
+	linkFiles         bool = false
+	hashEntireFile    bool = false
+	visitCount        int64
+	fileCount         int64
+	dupCount          int64
+	dupSize           int64
+	potentialDupCount int64
+	minSize           int64
+	hashNumBytes      int64 = 4096
+	filenameMatch           = "*"
+	filenameRegex     *regexp.Regexp
+	duplicates        = struct {
 		sync.RWMutex
-		m map[string][]string
-	}{m: make(map[string][]string)}
-	noStats      bool
+		m map[int64][]*PotentialDupe
+	}{m: make(map[int64][]*PotentialDupe)}
+	printStats   bool
 	walkProgress *Progress
-	walkFiles    []*WalkedFile
+	walkFiles    = make(map[int64][]*WalkedFile)
 )
 
+var wg sync.WaitGroup
+
 func scanAndHashFile(path string, f os.FileInfo, progress *Progress) {
+	defer wg.Done()
 	if !f.IsDir() && f.Size() > minSize && (filenameMatch == "*" || filenameRegex.MatchString(f.Name())) {
 		atomic.AddInt64(&fileCount, 1)
 		file, err := os.Open(path)
@@ -47,61 +62,79 @@ func scanAndHashFile(path string, f os.FileInfo, progress *Progress) {
 			fmt.Fprintf(os.Stderr, "%s\n", err.Error())
 		} else {
 			md5 := md5.New()
-			_, err := io.Copy(md5, file)
-			if err != nil {
-				log.Errorln(err)
+
+			if hashEntireFile {
+				_, err := io.Copy(md5, file)
+				if err != nil {
+					log.Errorln(err)
+				}
+
+			} else {
+				_, err := io.CopyN(md5, file, hashNumBytes)
+				if err != nil {
+					log.Errorln(err)
+				}
+
+				file.Seek(hashNumBytes*-1, io.SeekEnd)
+				_, err = io.CopyN(md5, file, hashNumBytes)
+
+				if err != nil {
+					log.Errorln(err)
+				}
 			}
-			var hash = fmt.Sprintf("%x", md5.Sum(nil))
+			var quickHash = fmt.Sprintf("%x", md5.Sum(nil))
 			err = file.Close()
 			if err != nil {
 				log.Errorln(err)
 			}
 			duplicates.Lock()
-			duplicates.m[hash] = append(duplicates.m[hash], path)
+			duplicates.m[f.Size()] = append(duplicates.m[f.Size()], &PotentialDupe{WalkedFile{path, f}, quickHash, string("")})
 			duplicates.Unlock()
 			progress.increment()
 		}
 	}
 }
 
-func worker(workerID int, jobs <-chan *WalkedFile, results chan<- int, progress *Progress) {
+func hash_worker(workerID int, jobs <-chan *WalkedFile, progress *Progress) {
 	for file := range jobs {
 		fmt.Println("hashing ", file.path, " on worker ", workerID)
 		scanAndHashFile(file.path, file.file, progress)
-		results <- 0
 	}
 }
 
 func computeHashes() {
-	walkProgress := creatProgress("Scanning %d files ...", &noStats)
+	walkProgress := creatProgress("Scanning %d files ...", &printStats)
 	jobs := make(chan *WalkedFile, visitCount)
-	results := make(chan int, visitCount)
 
 	if singleThread {
 		fmt.Println("Single Thread Mode")
-		go worker(1, jobs, results, walkProgress)
+		go hash_worker(1, jobs, walkProgress)
 	} else {
 		for w := 1; w <= runtime.NumCPU(); w++ {
-			go worker(w, jobs, results, walkProgress)
+			go hash_worker(w, jobs, walkProgress)
 		}
 	}
 
-	for _, file := range walkFiles {
-		jobs <- file
+	for _, files := range walkFiles {
+		if len(files) > 1 {
+			for _, f := range files {
+				wg.Add(1)
+				jobs <- f
+			}
+		}
 	}
 
 	close(jobs)
 
-	for range walkFiles {
-		<-results
-	}
+	wg.Wait()
+
 	walkProgress.delete()
 }
 
 func visitFile(path string, f os.FileInfo, err error) error {
 	visitCount++
 	if !f.IsDir() && f.Size() > minSize && (filenameMatch == "*" || filenameRegex.MatchString(f.Name())) {
-		walkFiles = append(walkFiles, &WalkedFile{path: path, file: f})
+		walkFiles[f.Size()] = append(walkFiles[f.Size()], &WalkedFile{path, f})
 		walkProgress.increment()
 	}
 	return nil
@@ -115,12 +148,41 @@ func deleteFile(path string) {
 	}
 }
 
-func main() {
-	flag.Int64Var(&minSize, "size", 1, "Minimum size in bytes for a file")
+func linkFile(source, target string) {
+	fmt.Println("Linking " + target + " to " + source)
+	targetTemp := target + "-linkTemp"
+
+	err := os.Rename(target, targetTemp)
+	if err != nil {
+		fmt.Printf("Error renaming file before linking: %s \n", target)
+		return
+	}
+
+	err = os.Link(source, target)
+	if err != nil {
+		fmt.Printf("Error creating link: %s ... reverting rename\n", target)
+		err2 := os.Rename(target, targetTemp)
+		if err2 != nil {
+			fmt.Printf("Error rverting file renaming before linking: %s \n", target)
+		}
+		return
+	}
+
+	err = os.Remove(targetTemp)
+	if err != nil {
+		fmt.Printf("Error link temp file: %s \n", targetTemp)
+	}
+
+}
+
+func parseFlags() string {
+	flag.Int64Var(&minSize, "size", 65556, "Minimum size in bytes for a file")
 	flag.StringVar(&filenameMatch, "name", "*", "Filename pattern")
-	flag.BoolVar(&noStats, "nostats", false, "Do no output stats")
+	flag.BoolVar(&printStats, "nostats", false, "Do no output stats")
 	flag.BoolVar(&singleThread, "singleThread", false, "Work on only one thread")
 	flag.BoolVar(&delete, "delete", false, "Delete duplicate files")
+	flag.BoolVar(&linkFiles, "link", false, "Create hard links to duplicate files")
+	flag.BoolVar(&hashEntireFile, "full", false, "Hash the entrire contents of suspected duplicate files (slower)")
 	var help = flag.Bool("h", false, "Display this message")
 	flag.Parse()
 	if *help {
@@ -129,13 +191,19 @@ func main() {
 		flag.PrintDefaults()
 		os.Exit(0)
 	}
+	printStats = !printStats // flip to positive meaning to clearify code further down
 	if len(flag.Args()) < 1 {
 		fmt.Fprintf(os.Stderr, "You have to specify at least a directory to explore ...\n")
-		os.Exit(-1)
+		fmt.Fprintf(os.Stdout, "Run 'duplicates -h' for help\n")
+		os.Exit(0)
 	}
-	root := flag.Arg(0)
-	walkProgress = creatProgress("Walking through %d files ...", &noStats)
-	if !noStats {
+
+	return flag.Arg(0)
+}
+
+func generateFileList(root string) {
+	walkProgress = creatProgress("Walking through %d files ...", &printStats)
+	if printStats {
 		fmt.Printf("\nSearching duplicates in '%s' with name that match '%s' and minimum size '%d' bytes\n\n", root, filenameMatch, minSize)
 	}
 	r, _ := regexp.Compile(filenameMatch)
@@ -145,31 +213,103 @@ func main() {
 		log.Errorln(err)
 	}
 	walkProgress.delete()
-	computeHashes()
-	for _, v := range duplicates.m {
-		if len(v) > 1 {
-			dupCount++
-		}
+}
+
+func ByteCountSI(b int64) string {
+	const unit = 1000
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
 	}
-	if !noStats {
-		fmt.Printf("\nFound %d duplicates from %d files in %s with options { size: '%d', name: '%s' }\n", dupCount, fileCount, root, minSize, filenameMatch)
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
 	}
-	fmt.Printf("/n /n /n")
-	for _, v := range duplicates.m {
+	return fmt.Sprintf("%.1f %cB",
+		float64(b)/float64(div), "kMGTPE"[exp])
+}
+
+func main() {
+	//	walkFiles = make(map[int64][]*WalkedFile)
+	//TODO: add time run time measurement
+
+	startTime := time.Now()
+
+	location := parseFlags()
+
+	generateFileList(location)
+
+	for _, v := range walkFiles {
 		if len(v) > 1 {
-			for i, file := range v {
-				if i > 0 && delete {
-					deleteFile(file)
-				} else {
-					fmt.Printf("%s\n", file)
-				}
-			}
-			fmt.Println("---------")
+			potentialDupCount += int64(len(v) - 1)
+			// potentialDupSize += k * int64(len(v)-1)
 		}
 	}
 
-	if !noStats {
-		fmt.Printf("\nFound %d duplicates from %d files in %s with options { size: '%d', name: '%s' }\n", dupCount, fileCount, root, minSize, filenameMatch)
+	fmt.Printf("\nInvestigating %d potential duplicates from %d files found in: %s\n\n", potentialDupCount, fileCount, location)
+
+	computeHashes()
+
+	for k, v := range duplicates.m {
+		if len(v) > 1 {
+			dupCount += int64(len(v) - 1)
+			dupSize += k * int64(len(v)-1)
+		}
 	}
+
+	if dupCount == 0 {
+		fmt.Println("No duplicates found")
+		os.Exit(0)
+	}
+
+	fmt.Println("Processing results")
+
+	for s, v := range duplicates.m {
+		if printStats {
+			fmt.Println("---------")
+		}
+
+		if len(v) > 1 {
+			for i, file := range v {
+				if printStats {
+					fmt.Printf("[%d] [%s] %s", s, file.quickHash, file.path)
+				}
+
+				if i == 0 {
+					fmt.Println()
+					continue
+				}
+
+				sameHash := (file.quickHash == v[0].quickHash) && (i > 0)
+
+				if sameHash && printStats {
+					fmt.Println(" [DUP]")
+				} else {
+					fmt.Println(" [NO-DUP]")
+				}
+
+				if sameHash && delete {
+
+					deleteFile(file.path)
+					continue
+				}
+
+				if sameHash && linkFiles {
+					linkFile(v[0].path, file.path)
+					continue
+				}
+			}
+		}
+	}
+
+	duration := time.Since(startTime)
+
+	fmt.Printf("\n%d duplicates with a total size of %s from %d files found in %s in %s\n", dupCount, ByteCountSI(dupSize), fileCount, location, duration.String())
+
+	if printStats {
+		fmt.Println("---------")
+	}
+
 	os.Exit(0)
+
 }
