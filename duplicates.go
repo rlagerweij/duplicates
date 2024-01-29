@@ -55,6 +55,37 @@ var (
 
 var wg sync.WaitGroup
 
+func main() {
+
+	startTime := time.Now()
+	location := parseFlags()
+	generateFileList(location)
+
+	countFilesWithSameSize()
+
+	fmt.Printf("\nInvestigating %d potential duplicates from %d files found in: %s\n\n", potentialDupCount, visitCount, location)
+
+	computeHashes()
+
+	processResults()
+
+	if dupCount == 0 {
+		fmt.Println("No duplicates found")
+		os.Exit(0)
+	}
+
+	duration := time.Since(startTime)
+
+	fmt.Printf("\n%d duplicates with a total size of %s from %d files investigated in %s in %s\n", dupCount, ByteCountSI(dupSize), fileCount, location, duration.String())
+
+	if printStats {
+		fmt.Println("---------")
+	}
+
+	os.Exit(0)
+
+}
+
 func scanAndHashFile(path string, f os.FileInfo, progress *Progress) {
 	defer wg.Done()
 	if !f.IsDir() && f.Size() > minSize && (filenameMatch == "*" || filenameRegex.MatchString(f.Name())) {
@@ -232,39 +263,7 @@ func ByteCountSI(b int64) string {
 		float64(b)/float64(div), "kMGTPE"[exp])
 }
 
-func main() {
-	//	walkFiles = make(map[int64][]*WalkedFile)
-	//TODO: add time run time measurement
-
-	startTime := time.Now()
-
-	location := parseFlags()
-
-	generateFileList(location)
-
-	for _, v := range walkFiles {
-		if len(v) > 1 {
-			potentialDupCount += int64(len(v) - 1)
-			// potentialDupSize += k * int64(len(v)-1)
-		}
-	}
-
-	fmt.Printf("\nInvestigating %d potential duplicates from %d files found in: %s\n\n", potentialDupCount, visitCount, location)
-
-	computeHashes()
-
-	for k, v := range duplicates.m {
-		if len(v) > 1 {
-			dupCount += int64(len(v) - 1)
-			dupSize += k * int64(len(v)-1)
-		}
-	}
-
-	if dupCount == 0 {
-		fmt.Println("No duplicates found")
-		os.Exit(0)
-	}
-
+func processResults() {
 	fmt.Print("\nProcessing results\n")
 
 	for s, v := range duplicates.m {
@@ -281,6 +280,11 @@ func main() {
 				}
 
 				sameHash := (file.quickHash == v[0].quickHash) && (i > 0)
+
+				if sameHash {
+					dupCount += 1
+					dupSize += file.file.Size()
+				}
 
 				if sameHash && printStats {
 					fmt.Println(" [DUP]")
@@ -301,15 +305,13 @@ func main() {
 			}
 		}
 	}
+}
 
-	duration := time.Since(startTime)
-
-	fmt.Printf("\n%d duplicates with a total size of %s from %d files investigated in %s in %s\n", dupCount, ByteCountSI(dupSize), fileCount, location, duration.String())
-
-	if printStats {
-		fmt.Println("---------")
+func countFilesWithSameSize() {
+	for _, v := range walkFiles {
+		if len(v) > 1 {
+			potentialDupCount += int64(len(v) - 1)
+			// potentialDupSize += k * int64(len(v)-1)
+		}
 	}
-
-	os.Exit(0)
-
 }
