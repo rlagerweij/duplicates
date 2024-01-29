@@ -249,7 +249,7 @@ func main() {
 		}
 	}
 
-	fmt.Printf("\nInvestigating %d potential duplicates from %d files found in: %s\n\n", potentialDupCount, fileCount, location)
+	fmt.Printf("\nInvestigating %d potential duplicates from %d files found in: %s\n\n", potentialDupCount, visitCount, location)
 
 	computeHashes()
 
@@ -265,18 +265,15 @@ func main() {
 		os.Exit(0)
 	}
 
-	fmt.Println("Processing results")
+	fmt.Print("\nProcessing results\n")
 
 	for s, v := range duplicates.m {
-		if printStats {
-			fmt.Println("---------")
-		}
+
+		fmt.Println("---------")
 
 		if len(v) > 1 {
 			for i, file := range v {
-				if printStats {
-					fmt.Printf("[%d] [%s] %s", s, file.quickHash, file.path)
-				}
+				fmt.Printf("[%d] [%s] %s", s, file.quickHash, file.path)
 
 				if i == 0 {
 					fmt.Println()
@@ -307,7 +304,7 @@ func main() {
 
 	duration := time.Since(startTime)
 
-	fmt.Printf("\n%d duplicates with a total size of %s from %d files found in %s in %s\n", dupCount, ByteCountSI(dupSize), fileCount, location, duration.String())
+	fmt.Printf("\n%d duplicates with a total size of %s from %d files investigated in %s in %s\n", dupCount, ByteCountSI(dupSize), fileCount, location, duration.String())
 
 	if printStats {
 		fmt.Println("---------")
