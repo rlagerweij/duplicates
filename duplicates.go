@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -39,6 +40,7 @@ var (
 	dupSize           int64
 	potentialDupCount int64
 	minSize           int64
+	maxSize           int64
 	hashNumBytes      int64 = 4096
 	filenameMatch           = "*"
 	filenameRegex     *regexp.Regexp
@@ -133,7 +135,7 @@ func computeHashes() {
 
 func visitFile(path string, f os.FileInfo, err error) error {
 	visitCount++
-	if !f.IsDir() && f.Size() > minSize && (filenameMatch == "*" || filenameRegex.MatchString(f.Name())) {
+	if !f.IsDir() && f.Size() > minSize && f.Size() <= maxSize && (filenameMatch == "*" || filenameRegex.MatchString(f.Name())) {
 		walkFiles[f.Size()] = append(walkFiles[f.Size()], &WalkedFile{path, f})
 		walkProgress.increment()
 	}
@@ -176,7 +178,8 @@ func linkFile(source, target string) {
 }
 
 func parseFlags() string {
-	flag.Int64Var(&minSize, "size", 65556, "Minimum size in bytes for a file")
+	flag.Int64Var(&minSize, "min-size", 65556, "Minimum size in bytes for a file")
+	flag.Int64Var(&maxSize, "max-size", math.MaxInt, "Maximum size in bytes for a file")
 	flag.StringVar(&filenameMatch, "name", "*", "Filename pattern")
 	flag.BoolVar(&printStats, "nostats", false, "Do no output stats")
 	flag.BoolVar(&singleThread, "singleThread", false, "Work on only one thread")
