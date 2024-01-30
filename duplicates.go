@@ -284,9 +284,6 @@ func processResults() {
 				if sameHash {
 					dupCount += 1
 					dupSize += file.file.Size()
-				}
-
-				if sameHash && printStats {
 					fmt.Println(" [DUP]")
 				} else {
 					fmt.Println(" [NO-DUP]")
