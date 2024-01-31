@@ -63,7 +63,12 @@ func main() {
 
 	countFilesWithSameSize()
 
-	fmt.Printf("\nInvestigating %d potential duplicates from %d files found in: %s\n\n", potentialDupCount, visitCount, location)
+	fmt.Printf("\nFound %d files with %d potential duplicates in: %s\n", visitCount, potentialDupCount, location)
+
+	if potentialDupCount == 0 {
+		fmt.Println("No duplicates found")
+		os.Exit(0)
+	}
 
 	computeHashes()
 
@@ -74,13 +79,11 @@ func main() {
 		os.Exit(0)
 	}
 
+	fmt.Println("---------")
+
 	duration := time.Since(startTime)
 
-	fmt.Printf("\n%d duplicates with a total size of %s from %d files investigated in %s in %s\n", dupCount, ByteCountSI(dupSize), fileCount, location, duration.String())
-
-	if printStats {
-		fmt.Println("---------")
-	}
+	fmt.Printf("\n%d duplicates found with a total size of %s from %d files investigated in %s\n", dupCount, ByteCountSI(dupSize), fileCount, duration.String())
 
 	os.Exit(0)
 
@@ -130,7 +133,9 @@ func scanAndHashFile(path string, f os.FileInfo, progress *Progress) {
 
 func hash_worker(workerID int, jobs <-chan *WalkedFile, progress *Progress) {
 	for file := range jobs {
-		fmt.Println("hashing ", file.path, " on worker ", workerID)
+		if printStats {
+			fmt.Println("Hashing ", file.path, " on worker ", workerID)
+		}
 		scanAndHashFile(file.path, file.file, progress)
 	}
 }
@@ -237,9 +242,9 @@ func parseFlags() string {
 
 func generateFileList(root string) {
 	walkProgress = creatProgress("Walking through %d files ...", &printStats)
-	if printStats {
-		fmt.Printf("\nSearching duplicates in '%s' with name that match '%s' and minimum size '%d' bytes\n\n", root, filenameMatch, minSize)
-	}
+
+	fmt.Printf("\nSearching duplicates in '%s' with name that matches '%s' and minimum size of '%d' bytes\n", root, filenameMatch, minSize)
+
 	r, _ := regexp.Compile(filenameMatch)
 	filenameRegex = r
 	err := filepath.Walk(root, visitFile)
@@ -264,7 +269,7 @@ func ByteCountSI(b int64) string {
 }
 
 func processResults() {
-	fmt.Print("\nProcessing results\n")
+	fmt.Print("\nProcessing results:\n")
 
 	for s, v := range duplicates.m {
 
