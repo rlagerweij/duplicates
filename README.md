@@ -4,7 +4,7 @@ File duplicates finder
 
 Sometimes you need to find duplicates files on your disk. You can use this tool to do it. It uses a MD5 hash to identify duplicate files. You can also use some options to filter files by names an minimum size (in bytes).
 
-This program was initially designed and written by [Mathieu Ancelin](https://github.com/mathieuancelin/duplicates) and added upon by [carfloresf](https://github.com/carfloresf/duplicates). It had a great multi-threaded architecture but I wanted to adapt it to my use case, which is deduplicating a large media collection. The original program fully hashed every file to find duplicates based on hash, which is not necessary on large media files and also painfully slow. On the flip size, with partial hashes you theoretically run the risk of false duplicates, although this risk is low.
+This program was initially designed and written by [Mathieu Ancelin](https://github.com/mathieuancelin/duplicates) and added upon by [carfloresf](https://github.com/carfloresf/duplicates). It had a great multi-threaded architecture but I wanted to adapt it to my use case, which is deduplicating a large media collection. The original program fully hashed every file to find duplicates based on hash, which is not necessary on large media files and also painfully slow. On the flip size, with partial hashes you theoretically run the risk of false duplicates, although this risk is low. Pure text files and/or source code files are the most risky for partial hashing. Always use full hashing on those. 
 
 To make this program better suited to large files I made the following changes:
 - Manage potential duplicates based on size (faster, reduces the number of files that need to be hashed)
