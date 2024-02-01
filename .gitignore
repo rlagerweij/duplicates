@@ -9,6 +9,7 @@
 .idea/
 test/*
 .vscode/
+test.*
 
 # build binary
 duplicates
