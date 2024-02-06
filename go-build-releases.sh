@@ -107,8 +107,9 @@ else # lets start building
   CURRENT_DIRECTORY=${PWD##*/}
   OUTPUT=${SOURCE_FILE:-$CURRENT_DIRECTORY} # if no src file given, use current dir name
   NOW=$(date +'%Y-%m-%d_%T')
+  CTIMESTAMP=$(git show -s --format=%ci HEAD)
   HASH=$(git rev-parse --short HEAD)
-  LD_FLAGS=$(echo "-X 'main.sha1ver=$HASH' -X 'main.buildTime=$NOW'")
+  LD_FLAGS=$(echo "-X 'main.sha1ver=$HASH' -X 'main.buildTime=$CTIMESTAMP'")
 
   for PLATFORM in $PLATFORMS; do
     GOOS=${PLATFORM%/*}
