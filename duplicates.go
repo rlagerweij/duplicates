@@ -17,6 +17,11 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+var ( // these variable as set at build time
+	sha1ver   string = "testing" // sha1 revision used to build the program
+	buildTime string = "testing" // when the executable was built
+)
+
 // WalkedFile a type of struct
 type WalkedFile struct {
 	path string
@@ -56,6 +61,8 @@ var (
 var wg sync.WaitGroup
 
 func main() {
+
+	fmt.Printf("Duplicates (version: %s / %s)\n", sha1ver, buildTime)
 
 	startTime := time.Now()
 	location := parseFlags()
