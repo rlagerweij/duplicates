@@ -94,6 +94,13 @@ PLATFORMS="$PLATFORMS linux/arm64"
 # Shouldn't really need to modify anything below this line.  #
 ##############################################################
 
+if ! command -v zip &> /dev/null
+then
+    echo "'zip' program could not be found, please install it"
+    exit 1
+fi
+
+
 if [[ `git status --porcelain --untracked-files=no` ]]; then
   echo "Uncommitted changes in the repository. Commit or stash before building releases"
   exit 1
